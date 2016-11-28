@@ -5,7 +5,7 @@ import yaml
 import voluptuous
 from voluptuous import Required, Optional, Extra
 import pprint
-
+import os
 
 diff_schema = voluptuous.Any(
                   voluptuous.Schema({ Required('at'): str
@@ -29,7 +29,6 @@ mod_schema = voluptuous.Schema({ Required('file'): str
 
 image_schema = voluptuous.Schema({ Required('name'):str
                                  , Required('location'):str
-                                 , Required('tags'):str
                                  , Optional('dockerfile', default=None):str
                                  })
 
@@ -72,6 +71,24 @@ def update_json(json, path, value):
     except StopIteration:
         return value
 
+
+cwd = os.getcwd()
+
+def replace_cwd(x):
+    if isinstance(x, dict):
+        for key in x.keys():
+            x[key] = replace_cwd(x[key])
+        return x
+    elif isinstance(x, basestring) and '{cwd}' in x:
+        print("replacing!")
+        return x.format(cwd=cwd)
+    elif hasattr(x, '__iter__'):
+        ys = []
+        for y in x:
+            ys.append(replace_cwd(y))
+        return ys
+    else:
+        return x
 
 
 
@@ -133,23 +150,23 @@ if __name__ == "__main__":
                                         print("target path: " + target_path)
 
                                         target = path.parse(target_path)
-                                        print("")
-                                        print("")
-                                        print(diff["at"])
                                         for found in target.find(base):
                                             if "add" in diff:
                                                 new_value = found.value
-                                                new_value.update(diff["add"])
+                                                new_value.update(replace_cwd(diff["add"]))
                                                 update_json(new_base, get_path(found), new_value)
                                             elif "extend" in diff:
                                                 new_value = found.value
-                                                new_value.extend(diff["extend"])
+                                                new_value.extend(replace_cwd(diff["extend"]))
                                                 update_json(new_base, get_path(found), new_value)
+                                            elif "delete" in diff:
+                                                new_value = found.value
+                                                del new_value[diff["delete"]]
                                             pprint.pprint(new_base)
 
                                             # pprint.pprint(found.value)
                     new_doc.append(yaml.dump(new_base, default_flow_style=False, indent=4))
-                TARGET.write("\n---\n".join(new_doc))
+                TARGET.write("---\n".join(new_doc))
 
 
 
