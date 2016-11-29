@@ -13,6 +13,7 @@ setup(
     entry_points='''
         [console_scripts]
         build=kubeenv:build
+        apply=kubeenv:apply
         push=kubeenv:push
         generate=kubeenv:generate
         

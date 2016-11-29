@@ -1,12 +1,14 @@
 from __future__ import print_function
 
+
+import os
+import os.path
+import subprocess
+import pprint
 import jsonpath_rw as path
 import yaml
 import voluptuous
 from voluptuous import Required, Optional, Extra
-import pprint
-import os
-import os.path
 import click
 
 ##############
@@ -360,9 +362,26 @@ def push(image, env):
     """
     push {image|all} {environment}
     """
-    print("pushing")
-    pprint.pprint(image)
-    pprint.pprint(env)
+
+    if "docker-repo" not in env:
+        print("no repo to push to")
+        return False
+
+    if "all" in image:
+        for im in image["all"]:
+            local = image["name"]
+            tagged = env["docker-repo"] + "/" + image["name"] + ":1.0.0"
+
+            subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
+            subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
+
+
+    else:
+        local = image["name"]
+        tagged = env["docker-repo"] + "/" + image["name"] + ":1.0.0"
+
+        subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
+        subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
 
 @click.command()
 @click.argument("env", type=KubeEnv())
@@ -418,7 +437,7 @@ def apply(env, kubefile):
 
         for file in kubefile["all"]:
             for deploy in file["deployments"]:
-                if deploy["name"] == env:
+                if deploy["name"] == env["name"]:
                     if not os.path.exists(deploy["path"]):
                         while True:
                             answer = raw_input("{file} does not exist in {env}, generate it? (Y/n)".format(file=os.path.basename, env=env))
@@ -429,14 +448,14 @@ def apply(env, kubefile):
 
         for file in kubefile["all"]:
             for deploy in file["deployments"]:
-                if deploy["name"] == env:
+                if deploy["name"] == env["name"]:
                     if not os.path.exists(deploy["path"]):
                         subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
 
     else:
 
         for deploy in kubefile["deployments"]:
-            if deploy["name"] == env:
+            if deploy["name"] == env["name"]:
                 if not os.path.exists(deploy["path"]):
                     while True:
                         answer = raw_input("{file} does not exist in {env}, generate it? (Y/n)".format(file=os.path.basename, env=env))
@@ -446,7 +465,7 @@ def apply(env, kubefile):
                             generate(env, kubefile)
 
         for deploy in kubefile["deployments"]:
-            if deploy["name"] == env:
+            if deploy["name"] == env["name"]:
                 if not os.path.exists(deploy["path"]):
                     subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
 
