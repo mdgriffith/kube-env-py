@@ -332,8 +332,25 @@ def build(image):
     Build an image listed in the kube/kube-env.yaml file.
     build {image}
     """
-    print("Found image!")
-    pprint.pprint(image)
+    if "all" in image:
+        for im in image["all"]:
+            full_image_name = im["name"]
+            dockerfile = "Dockerfile"
+            if "dockerfile" in image:
+                dockerfile = im["dockerfile"]
+            location = im["location"]
+            subprocess.call("docker build -t {full_image_name} -f {dockerfile} {location}".format(
+                full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
+
+    else:
+        full_image_name = image["name"]
+        dockerfile = "Dockerfile"
+        if "dockerfile" in image:
+            dockerfile = image["dockerfile"]
+        location = image["location"]
+        subprocess.call("docker build -t {full_image_name} -f {dockerfile} {location}".format(
+            full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
+
 
 
 @click.command()
@@ -405,7 +422,7 @@ def apply(env, kubefile):
                     if not os.path.exists(deploy["path"]):
                         while True:
                             answer = raw_input("{file} does not exist in {env}, generate it? (Y/n)".format(file=os.path.basename, env=env))
-                            if answer.strip() == "n" 
+                            if answer.strip() == "n":
                                 return False
                             elif answer.strip() == "Y":
                                 generate(env, kubefile)
@@ -423,7 +440,7 @@ def apply(env, kubefile):
                 if not os.path.exists(deploy["path"]):
                     while True:
                         answer = raw_input("{file} does not exist in {env}, generate it? (Y/n)".format(file=os.path.basename, env=env))
-                        if answer.strip() == "n" 
+                        if answer.strip() == "n":
                             return False
                         elif answer.strip() == "Y":
                             generate(env, kubefile)
@@ -433,14 +450,6 @@ def apply(env, kubefile):
                 if not os.path.exists(deploy["path"]):
                     subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
 
-
-
-        
-
-
-    # Check to make sure all files are present
-    # If not, prompt to generate them
-    # Then
 
 @click.command()
 def logs():
