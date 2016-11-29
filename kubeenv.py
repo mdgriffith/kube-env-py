@@ -386,6 +386,23 @@ def auto_version(image_name, version_type):
         return str(largest[0]) + "." + str(largest[1]) + "." + str(largest[2]) 
 
 
+def get_latest_real_version(image_name):
+    command = 'docker images {image_name} --format "{{{{.Tag}}}}"'.format(image_name=image_name)
+    versions = subprocess.check_output(command, shell=True)
+    if versions == "":
+        return "1.0.0"
+
+    largest = None
+    for vers in versions.split("\n"):
+        semver = semVer(vers)
+        print(semver)
+        if semver:
+            if largest is None:
+                largest = semver
+            elif isLarger(semver, largest):
+                largest = semver
+    return largest
+
 
 @click.command()
 @click.argument("image", type=Image())
@@ -428,21 +445,50 @@ def push(image, env, version_type):
 
     if "all" in image:
         for im in image["all"]:
-            tag = auto_version(env["docker-repo"] + "/" + im["name"], version_type)
-            local = image["name"]
-            tagged = env["docker-repo"] + "/" + image["name"] + ":" + tag
+            tag = get_latest_real_version(im["name"])
+            local = im["name"] + ":" + tag
+            tagged = env["docker-repo"] + "/" + im["name"] + ":" + tag
 
             subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
             subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
 
     else:
-        tag = auto_version(env["docker-repo"] + "/" + image["name"], version_type)
-        local = image["name"]
-        tagged = env["docker-repo"] + "/" + image["name"] + ":" + tag
+        tag = get_latest_real_version(im["name"])
+        local = im["name"] + ":" + tag
+        tagged = env["docker-repo"] + "/" + im["name"] + ":" + tag
 
         subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
         subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
 
+
+@click.command()
+@click.argument("image", type=Image())
+@click.argument("version_type", type=Version())
+def tag(image, version_type):
+    """
+    """
+    if "all" in image:
+        for im in image["all"]:
+            tag = auto_version(im["name"], version_type)
+            local = image["name"]
+            tagged = image["name"] + ":" + tag
+            subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
+
+    else:
+        tag = auto_version(image["name"], version_type)
+        local = image["name"]
+        tagged = image["name"] + ":" + tag
+        subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
+
+
+
+
+@click.command()
+@click.argument("release_env", type=ReleaseEnv())
+@click.argument("version_type", type=Version())
+def release(release_env, version_type):
+    
+    # For every image, get verion numbers
 
 @click.command()
 @click.argument("env", type=KubeEnv())

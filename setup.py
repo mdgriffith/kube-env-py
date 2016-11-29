@@ -15,6 +15,7 @@ setup(
         build=kubeenv:build
         apply=kubeenv:apply
         push=kubeenv:push
+        tag=kubeenv:tag
         generate=kubeenv:generate
         
     ''',
