@@ -175,19 +175,36 @@ class KubeFile(click.ParamType):
                 config_schema(config)
 
                 kube_dir = config["kube-env"]["dirs"]["kubernetes-configs"]
+                deploy_dir = config["kube-env"]["dirs"]["deployments"]
 
                 files = []
                 for item in os.listdir(kube_dir):
-                    pathed_item = os.path.join(kube_dir, item)
-                    if os.path.isfile(pathed_item):
-                        files.append(pathed_item)
+                    source_item = os.path.join(kube_dir, item)
+
+                    if os.path.isfile(source_item):
+                        deployments = []
+                        for deployment in config["kube-env"]["deployments"]:
+
+
+                            if "modifications" in deployment:
+                                mods = deployment["modifications"]
+                            else:
+                                mods = None
+
+                            deployments.append({ "name": deployment["name"]
+                                               , "path": os.path.join(deploy_dir, deployment["name"], item)
+                                               , "modifications": mods
+                                               })
+
+                        files.append({"src":source_item, "deployments":deployments})
 
                 if value == "all":
                     return {"all":files}
 
                 found = None
                 for file in files:
-                    if file == value or file.replace(".yaml", "") == value:
+                    base = os.path.basename(file["src"])
+                    if base == value or base.replace(".yaml", "") == value:
                         found = file
                         break
 
@@ -239,7 +256,6 @@ def replace_cwd(x):
             x[key] = replace_cwd(x[key])
         return x
     elif isinstance(x, basestring) and '{cwd}' in x:
-        print("replacing!")
         return x.format(cwd=cwd)
     elif hasattr(x, '__iter__'):
         ys = []
@@ -250,77 +266,60 @@ def replace_cwd(x):
         return x
 
 
-
-
-def apply_modifications(kube_env, file):
+def make_modifications(file, filename, modifications):
 
     docs = file.split("---")
     new_doc = []
     for file in docs:
         base = yaml.load(file)
         new_base = base.copy()
+        for mod in modifications:
+            if mod["file"] == filename:
 
-        for deployment in kube_env["deployments"]:
-            if "modifications" in deployment:
-                print("modifications detected")
-                for mod in deployment["modifications"]:
-                    if mod["file"] == "base.yaml":
+                if "where" in mod:
+                    where = mod["where"].split("==")
+                    desired = where[1].strip()
+                    target = where[0].strip()
 
-                        if "where" in mod:
-                            where = mod["where"].split("==")
-                            desired = where[1].strip()
-                            target = where[0].strip()
+                    passing = False
+                    for found in path.parse(target).find(base):
+                        if found.value == desired:
+                            passing = True
+                    if not passing:
+                        continue
 
-                            passing = False
-                            for found in path.parse(target).find(base):
-                                if found.value == desired:
-                                    passing = True
-                            if not passing:
-                                continue
+                for diff in mod["diff"]:
 
-                        for diff in mod["diff"]:
+                    target_path = diff["at"]
 
-                            target_path = diff["at"]
+                    if "where" in diff:
+                        where = diff["where"].split("==")
+                        desired = where[1].strip()
+                        target = where[0].strip()
+                        found_index = None
+                        for i, found in enumerate(path.parse(target_path).find(base)):
+                            if target in found.value:
+                                if found.value[target] == desired:
+                                    found_index = i
+                        if found_index is None:
+                            continue
+                        target_path = target_path[:-3] + "[" + str(found_index) + "]"
 
-                            if "where" in diff:
-                                pprint.pprint(diff["where"])
-                                where = diff["where"].split("==")
-                                desired = where[1].strip()
-                                target = where[0].strip()
-                                found_index = None
-                                for i, found in enumerate(path.parse(target_path).find(base)):
-                                    if target in found.value:
-                                        if found.value[target] == desired:
-                                            found_index = i
-                                if found_index is None:
-                                    continue
-                                target_path = target_path[:-3] + "[" + str(found_index) + "]"
-
-                            target = path.parse(target_path)
-                            for found in target.find(base):
-                                if "add" in diff:
-                                    new_value = found.value
-                                    new_value.update(replace_cwd(diff["add"]))
-                                    update_json(new_base, get_path(found), new_value)
-                                elif "extend" in diff:
-                                    new_value = found.value
-                                    new_value.extend(replace_cwd(diff["extend"]))
-                                    update_json(new_base, get_path(found), new_value)
-                                elif "delete" in diff:
-                                    new_value = found.value
-                                    del new_value[diff["delete"]]
+                    target = path.parse(target_path)
+                    for found in target.find(base):
+                        if "add" in diff:
+                            new_value = found.value
+                            new_value.update(replace_cwd(diff["add"]))
+                            update_json(new_base, get_path(found), new_value)
+                        elif "extend" in diff:
+                            new_value = found.value
+                            new_value.extend(replace_cwd(diff["extend"]))
+                            update_json(new_base, get_path(found), new_value)
+                        elif "delete" in diff:
+                            new_value = found.value
+                            del new_value[diff["delete"]]
         new_doc.append(yaml.dump(new_base, default_flow_style=False, indent=4))
     return "---\n".join(new_doc)
-
-
-
-
-def get_kubeenv(name):
-    pass
-
-def get_kubefiles(name):
-    pass
-
 
 
 
@@ -356,9 +355,38 @@ def generate(env, kubefile):
     Switch to an environment listed in kube/kube-env file.
     generate {environment} {file|all}
     """
-    print("generating")
-    pprint.pprint(env)
-    pprint.pprint(kubefile)
+    if "all" in kubefile:
+        for kubeconfig in kubefile["all"]:
+            for deploy in kubeconfig["deployments"]:
+                if deploy["name"] == env["name"]:
+                    with open(kubeconfig["src"]) as SRC:
+                        if not os.path.exists(os.path.dirname(deploy["path"])):
+                            os.makedirs(os.path.dirname(deploy["path"]))
+                        with open(deploy["path"], "w") as TARGET:
+                            if deploy["modifications"] is not None:
+                                TARGET.write(make_modifications( SRC.read()
+                                                               , os.path.basename(kubeconfig["src"])
+                                                               , deploy["modifications"]
+                                                               )
+                                            )
+                            else:
+                                TARGET.write(SRC.read())
+    else:
+        for deploy in kubefile["deployments"]:
+            if deploy["name"] == env["name"]:
+                with open(kubefile["src"]) as SRC:
+                    if not os.path.exists(os.path.dirname(deploy["path"])):
+                        os.makedirs(os.path.dirname(deploy["path"]))
+                    with open(deploy["path"], "w") as TARGET:
+                        if deploy["modifications"] is not None:
+                            TARGET.write(make_modifications( SRC.read()
+                                                           , os.path.basename(kubefile["src"])
+                                                           , deploy["modifications"]
+                                                           )
+                                        )
+                        else:
+                            TARGET.write(SRC.read())
+    
 
 
 @click.command()
