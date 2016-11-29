@@ -14,6 +14,7 @@ setup(
         [console_scripts]
         build=kubeenv:build
         push=kubeenv:push
+        generate=kubeenv:generate
         
     ''',
 )

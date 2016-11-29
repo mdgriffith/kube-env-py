@@ -6,6 +6,7 @@ import voluptuous
 from voluptuous import Required, Optional, Extra
 import pprint
 import os
+import os.path
 import click
 
 ##############
@@ -150,6 +151,58 @@ class Image(click.ParamType):
 
 
 
+class KubeFile(click.ParamType):
+
+    name = 'kube-env kube-config'
+
+    def __init__(self, base_dir=None, filename=None):
+        if base_dir is None:
+            self.base_dir = ""
+        else:
+            self.base_dir = base_dir
+
+        if filename is None:
+            self.filename = "kube-env.yaml"
+        else:
+            self.filename = filename
+
+
+
+    def convert(self, value, param, ctx):
+        try:
+            with open(os.path.join(self.base_dir, self.filename)) as KUBEENV:
+                config = yaml.load(KUBEENV.read())
+                config_schema(config)
+
+                kube_dir = config["kube-env"]["dirs"]["kubernetes-configs"]
+
+                files = []
+                for item in os.listdir(kube_dir):
+                    pathed_item = os.path.join(kube_dir, item)
+                    if os.path.isfile(pathed_item):
+                        files.append(pathed_item)
+
+                if value == "all":
+                    return {"all":files}
+
+                found = None
+                for file in files:
+                    if file == value or file.replace(".yaml", "") == value:
+                        found = file
+                        break
+
+                if found is None:
+                    self.fail('There is no {deploy} file in {filename}'.format(
+                            deploy=value, filename=kube_dir), param, ctx)
+
+                return found
+
+        except IOError:
+            self.fail('There is no {filename}.yaml config in {base}'.format(
+                filename=self.filename, base=self.base_dir), param, ctx)
+
+
+
 
 
 
@@ -195,6 +248,7 @@ def replace_cwd(x):
         return ys
     else:
         return x
+
 
 
 
@@ -258,6 +312,20 @@ def apply_modifications(kube_env, file):
         new_doc.append(yaml.dump(new_base, default_flow_style=False, indent=4))
     return "---\n".join(new_doc)
 
+
+
+
+def get_kubeenv(name):
+    pass
+
+def get_kubefiles(name):
+    pass
+
+
+
+
+
+
 @click.command()
 @click.argument("image", type=Image())
 def build(image):
@@ -281,15 +349,21 @@ def push(image, env):
     pprint.pprint(env)
 
 @click.command()
-def generate():
+@click.argument("env", type=KubeEnv())
+@click.argument("kubefile", type=KubeFile())
+def generate(env, kubefile):
     """
     Switch to an environment listed in kube/kube-env file.
     generate {environment} {file|all}
     """
-    pass
+    print("generating")
+    pprint.pprint(env)
+    pprint.pprint(kubefile)
 
 
 @click.command()
+@click.argument("env", type=KubeEnv())
+@click.argument("kubefile", type=KubeFile())
 def apply():
     """
     Switch to an environment listed in kube/kube-env file.
