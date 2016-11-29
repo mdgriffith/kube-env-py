@@ -7,6 +7,13 @@ setup(
     install_requires=[
         'Click',
         'pyyaml',
-        'voluptuous'
-    ]
+        'voluptuous',
+        'jsonpath_rw'
+    ],
+    entry_points='''
+        [console_scripts]
+        build=kubeenv:build
+        push=kubeenv:push
+        
+    ''',
 )

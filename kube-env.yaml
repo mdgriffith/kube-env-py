@@ -1,0 +1,40 @@
+kube-env:
+  dirs:
+    kubernetes-configs: example
+    deployments: deployments
+  docker:
+    cmd: minikube docker-env
+    images:
+      - name: nginx-static-proxy
+        location: app/nginx
+      - name: letsencrypt-companion
+        location: app/letsencrypt
+      - name: python-dependencies
+        location: app/api
+        dockerfile: dependencies.Dockerfile
+      - name: flask-api
+        location: app/api
+  deployments:
+    - name: prod
+      docker-repo: gcr.io/lunar-alpha-93213
+      kubernetes-context: gke_lunar-alpha-93213_us-east1-c_starterkit-experiment
+    - name: dev
+      kubernetes-context: minikube
+      modifications:
+        - file: base.yaml
+          where: metadata.name == api
+          diff:
+            - at: spec.template.spec.containers[*]
+              where: name == flask
+              add:
+                volumeMounts:
+                  - mountPath: /usr/src/app/
+                    name: flask-src
+            - at: spec.template.spec.volumes
+              extend:
+                - name: static-serve-dir
+                  hostPath:
+                    path: "{cwd}/app/nginx/serve/"
+                - name: flask-src
+                  hostPath:
+                    path: "{cwd}/app/api/"
