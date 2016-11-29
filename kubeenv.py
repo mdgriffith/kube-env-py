@@ -291,9 +291,7 @@ def make_modifications(file, filename, modifications):
                         continue
 
                 for diff in mod["diff"]:
-
                     target_path = diff["at"]
-
                     if "where" in diff:
                         where = diff["where"].split("==")
                         desired = where[1].strip()
@@ -374,7 +372,6 @@ def push(image, env):
 
             subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
             subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
-
 
     else:
         local = image["name"]
@@ -477,16 +474,6 @@ def logs():
     """
     pass
 
-
-
-if __name__ == "__main__":
-    with open("example/kube-env.yaml") as KUBEENV:
-        kube_env_file = yaml.load(KUBEENV.read())
-        config_schema(kube_env_file)
-        kube_env = kube_env_file["kube-env"]
-        with open("example/base.yaml") as BASE:
-            with open("example/target.yaml", "w") as TARGET:
-                TARGET.write(apply_modifications(kube_env, BASE.read()))
 
 
 
