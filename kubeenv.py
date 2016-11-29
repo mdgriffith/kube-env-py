@@ -223,6 +223,15 @@ class KubeFile(click.ParamType):
 
 
 
+class Version(click.ParamType):
+
+    name = 'kube-env version'
+
+    def convert(self, value, param, ctx):
+        if value not in ['major', 'minor', 'patch']:
+            self.fail('{value} needs to be major, minor or patch'.format(value=value), param, ctx)
+        return value
+
 
 
 
@@ -323,6 +332,59 @@ def make_modifications(file, filename, modifications):
 
 
 
+def semVer(tag):
+    nums = tag.split(".")
+
+    if len(nums) != 3:
+        return False
+    try:
+        return [int(nums[0]),int(nums[1]),int(nums[2])]
+    except ValueError:
+        return False
+
+def isLarger(s1, s2):
+    if s1[0] > s2[0]:
+        return True
+    elif s1[1] > s2[1]:
+        return True
+    elif s1[2] > s2[2]:
+        return True
+    else:
+        return False
+
+
+def auto_version(image_name, version_type):
+    if version_type not in ["major", "minor", "patch"]:
+        print("version needs to be either major, minor, or patch")
+        return False
+    command = 'docker images {image_name} --format "{{{{.Tag}}}}"'.format(image_name=image_name)
+    versions = subprocess.check_output(command, shell=True)
+    if versions == "":
+        return "1.0.0"
+
+    largest = None
+    for vers in versions.split("\n"):
+        semver = semVer(vers)
+        print(semver)
+        if semver:
+            if largest is None:
+                largest = semver
+            elif isLarger(semver, largest):
+                largest = semver
+    if largest is None:
+        return "1.0.0"
+    else:
+        if version_type == "major":
+            largest[0] = largest[0] + 1
+            largest[1] = 0
+            largest[2] = 0
+        elif version_type == "minor":
+            largest[1] = largest[1] + 1
+            largest[2] = 0
+        elif version_type == "patch":
+            largest[2] = largest[2] + 1
+        return str(largest[0]) + "." + str(largest[1]) + "." + str(largest[2]) 
+
 
 
 @click.command()
@@ -334,7 +396,7 @@ def build(image):
     """
     if "all" in image:
         for im in image["all"]:
-            full_image_name = im["name"]
+            full_image_name = im["name"] + ":latest"
             dockerfile = "Dockerfile"
             if "dockerfile" in image:
                 dockerfile = im["dockerfile"]
@@ -343,7 +405,7 @@ def build(image):
                 full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
 
     else:
-        full_image_name = image["name"]
+        full_image_name = image["name"] + ":latest"
         dockerfile = "Dockerfile"
         if "dockerfile" in image:
             dockerfile = image["dockerfile"]
@@ -352,33 +414,35 @@ def build(image):
             full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
 
 
-
 @click.command()
 @click.argument("image", type=Image())
 @click.argument("env", type=KubeEnv())
-def push(image, env):
+@click.argument("version_type", type=Version())
+def push(image, env, version_type):
     """
     push {image|all} {environment}
     """
-
     if "docker-repo" not in env:
         print("no repo to push to")
         return False
 
     if "all" in image:
         for im in image["all"]:
+            tag = auto_version(env["docker-repo"] + "/" + im["name"], version_type)
             local = image["name"]
-            tagged = env["docker-repo"] + "/" + image["name"] + ":1.0.0"
+            tagged = env["docker-repo"] + "/" + image["name"] + ":" + tag
 
             subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
             subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
 
     else:
+        tag = auto_version(env["docker-repo"] + "/" + image["name"], version_type)
         local = image["name"]
-        tagged = env["docker-repo"] + "/" + image["name"] + ":1.0.0"
+        tagged = env["docker-repo"] + "/" + image["name"] + ":" + tag
 
         subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
         subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
+
 
 @click.command()
 @click.argument("env", type=KubeEnv())
