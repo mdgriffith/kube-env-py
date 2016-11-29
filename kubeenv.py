@@ -392,12 +392,55 @@ def generate(env, kubefile):
 @click.command()
 @click.argument("env", type=KubeEnv())
 @click.argument("kubefile", type=KubeFile())
-def apply():
+def apply(env, kubefile):
     """
     Switch to an environment listed in kube/kube-env file.
     apply {environment} {file|all}
     """
-    pass
+    if "all" in kubefile:
+
+        for file in kubefile["all"]:
+            for deploy in file["deployments"]:
+                if deploy["name"] == env:
+                    if not os.path.exists(deploy["path"]):
+                        while True:
+                            answer = raw_input("{file} does not exist in {env}, generate it? (Y/n)".format(file=os.path.basename, env=env))
+                            if answer.strip() == "n" 
+                                return False
+                            elif answer.strip() == "Y":
+                                generate(env, kubefile)
+
+        for file in kubefile["all"]:
+            for deploy in file["deployments"]:
+                if deploy["name"] == env:
+                    if not os.path.exists(deploy["path"]):
+                        subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
+
+    else:
+
+        for deploy in kubefile["deployments"]:
+            if deploy["name"] == env:
+                if not os.path.exists(deploy["path"]):
+                    while True:
+                        answer = raw_input("{file} does not exist in {env}, generate it? (Y/n)".format(file=os.path.basename, env=env))
+                        if answer.strip() == "n" 
+                            return False
+                        elif answer.strip() == "Y":
+                            generate(env, kubefile)
+
+        for deploy in kubefile["deployments"]:
+            if deploy["name"] == env:
+                if not os.path.exists(deploy["path"]):
+                    subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
+
+
+
+        
+
+
+    # Check to make sure all files are present
+    # If not, prompt to generate them
+    # Then
 
 @click.command()
 def logs():
