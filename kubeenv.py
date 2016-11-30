@@ -396,7 +396,9 @@ def replace_images(x, images, parent_key=None):
         return x
 
 
-
+def set_kubernetes_context(env):
+    context = env["kubernetes-context"]
+    subprocess.call("kubectl config use-context {context}".format(context=context), shell=True)
 
 
 def semVer(tag):
@@ -477,12 +479,12 @@ def build(image):
     build {image}
     """
     if "all" in image:
-        for im in image["all"]:
-            full_image_name = im["name"] + ":latest"
+        for img in image["all"]:
+            full_image_name = img["name"] + ":latest"
             dockerfile = "Dockerfile"
             if "dockerfile" in image:
-                dockerfile = im["dockerfile"]
-            location = im["location"]
+                dockerfile = img["dockerfile"]
+            location = img["location"]
             subprocess.call("docker build -t {full_image_name} -f {dockerfile} {location}".format(
                 full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
 
@@ -652,8 +654,9 @@ def apply(env, kubefile):
     Switch to an environment listed in kube/kube-env file.
     apply {environment} {file|all}
     """
-    if "all" in kubefile:
 
+    set_kubernetes_context(env)
+    if "all" in kubefile:
         for file in kubefile["all"]:
             for deploy in file["deployments"]:
                 if deploy["name"] == env["name"]:
