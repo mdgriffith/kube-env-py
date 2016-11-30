@@ -8,7 +8,7 @@ import pprint
 import jsonpath_rw as path
 import yaml
 import voluptuous
-from voluptuous import Required, Optional, Extra
+from voluptuous import Required, Optional, Extra, Any
 import click
 
 ##############
@@ -48,17 +48,17 @@ directories_schema = voluptuous.Schema({ Required('kubernetes-configs'): str
 config_schema = voluptuous.Schema({
     Required('kube-env'): {
         Required('dirs'): directories_schema,
-        Required('docker'): { Required('cmd'): str
-                            , Required('images'): [ image_schema ]
+        Required('docker'): { Required('images'): [ image_schema ]
                             },
         Required('deployments'): [{ Required('name'): str
+                                  , Required('image_versioning'): Any('semantic', 'latest')
                                   , Required('kubernetes-context'): str
                                   , Optional('docker-repo', default=None): str
                                   , Optional('modifications', default=None): [ mod_schema ]
                                   }
                                  ]
         
-        }
+    }
  })
 
 
@@ -183,7 +183,7 @@ class KubeFile(click.ParamType):
                 for item in os.listdir(kube_dir):
                     source_item = os.path.join(kube_dir, item)
 
-                    if os.path.isfile(source_item):
+                    if os.path.isfile(source_item) and (source_item.endswith("yaml") or source_item.endswith("yml")):
                         deployments = []
                         for deployment in config["kube-env"]["deployments"]:
 
@@ -220,6 +220,37 @@ class KubeFile(click.ParamType):
             self.fail('There is no {filename}.yaml config in {base}'.format(
                 filename=self.filename, base=self.base_dir), param, ctx)
 
+
+
+def get_images(env):
+    with open("kube-env.yaml") as KUBEENV:
+        config = yaml.load(KUBEENV.read())
+        config_schema(config)
+
+        images = config["kube-env"]["docker"]["images"]
+
+        docker_repo = None
+
+        for deployment in config["kube-env"]["deployments"]:
+
+            if deployment["name"] == env["name"]:
+                if "docker-repo" in deployment:
+                    docker_repo = deployment["docker-repo"]
+                break
+
+        expanded_images = {}
+        for img in images:
+            img["repo"] = docker_repo
+
+            if env["image_versioning"] == "semantic":
+                img["version"] = get_latest_real_version(img["name"])
+            elif env["image_versioning"] == "latest":
+                img["version"] = "latest"
+            expanded_images[img["name"]] = img
+            
+
+        return expanded_images
+       
 
 
 
@@ -277,12 +308,10 @@ def replace_cwd(x):
         return x
 
 
-def make_modifications(file, filename, modifications):
+def make_modifications(files, filename, modifications):
 
-    docs = file.split("---")
     new_doc = []
-    for file in docs:
-        base = yaml.load(file)
+    for base in files:
         new_base = base.copy()
         for mod in modifications:
             if mod["file"] == filename:
@@ -327,8 +356,36 @@ def make_modifications(file, filename, modifications):
                         elif "delete" in diff:
                             new_value = found.value
                             del new_value[diff["delete"]]
-        new_doc.append(yaml.dump(new_base, default_flow_style=False, indent=4))
-    return "---\n".join(new_doc)
+        new_doc.append(new_base)
+    return new_doc
+
+
+
+def replace_images(x, images, parent_key=None):
+    if isinstance(x, dict):
+        for key in x.keys():
+            x[key] = replace_images(x[key], images, key)
+        return x
+    elif isinstance(x, basestring) and parent_key == "image":
+        if x in images:
+            new_name = ""
+            if "repo" in images[x] and images[x]["repo"] is not None:
+                new_name = images[x]["repo"] + "/"
+
+            new_name = new_name + images[x]["name"] + ":" + images[x]["version"]
+
+            return new_name
+        else:
+            return x
+    elif hasattr(x, '__iter__'):
+        ys = []
+        for y in x:
+            ys.append(replace_images(y, images))
+        return ys
+    else:
+        return x
+
+
 
 
 
@@ -353,7 +410,7 @@ def isLarger(s1, s2):
         return False
 
 
-def auto_version(image_name, version_type):
+def increment_version(image_name, version_type):
     if version_type not in ["major", "minor", "patch"]:
         print("version needs to be either major, minor, or patch")
         return False
@@ -469,26 +526,18 @@ def tag(image, version_type):
     """
     if "all" in image:
         for im in image["all"]:
-            tag = auto_version(im["name"], version_type)
+            tag = increment_version(im["name"], version_type)
             local = image["name"]
             tagged = image["name"] + ":" + tag
             subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
-
     else:
-        tag = auto_version(image["name"], version_type)
+        tag = increment_version(image["name"], version_type)
         local = image["name"]
         tagged = image["name"] + ":" + tag
         subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
 
 
 
-
-@click.command()
-@click.argument("release_env", type=ReleaseEnv())
-@click.argument("version_type", type=Version())
-def release(release_env, version_type):
-    
-    # For every image, get verion numbers
 
 @click.command()
 @click.argument("env", type=KubeEnv())
@@ -498,22 +547,52 @@ def generate(env, kubefile):
     Switch to an environment listed in kube/kube-env file.
     generate {environment} {file|all}
     """
+
+    images = get_images(env)
+
     if "all" in kubefile:
         for kubeconfig in kubefile["all"]:
             for deploy in kubeconfig["deployments"]:
                 if deploy["name"] == env["name"]:
+                    print("kubeconfig file")
+                    print(kubeconfig["src"])
                     with open(kubeconfig["src"]) as SRC:
                         if not os.path.exists(os.path.dirname(deploy["path"])):
                             os.makedirs(os.path.dirname(deploy["path"]))
                         with open(deploy["path"], "w") as TARGET:
                             if deploy["modifications"] is not None:
-                                TARGET.write(make_modifications( SRC.read()
-                                                               , os.path.basename(kubeconfig["src"])
-                                                               , deploy["modifications"]
-                                                               )
-                                            )
+
+                                src_content = SRC.read().split('---')
+                                
+                                parsed = []
+                                for src in src_content:
+                                    parsed.append(yaml.load(src))
+                                
+                                modded = make_modifications( parsed
+                                                           , os.path.basename(kubeconfig["src"])
+                                                           , deploy["modifications"]
+                                                           )
+                                with_images = replace_images(modded, images)
+
+                                as_yaml = []
+                                for doc in with_images:
+                                    as_yaml.append(yaml.dump(doc, default_flow_style=False, indent=4))
+
+                                TARGET.write("---\n".join(as_yaml))
                             else:
-                                TARGET.write(SRC.read())
+                                src_content = SRC.read().split('---')
+                                parsed = []
+                                for src in src_content:
+                                    parsed.append(yaml.load(src))
+                                
+                                with_images = replace_images(parsed, images)
+
+                                as_yaml = []
+                                for doc in with_images:
+                                    as_yaml.append(yaml.dump(doc, default_flow_style=False, indent=4))
+
+                                TARGET.write("---\n".join(as_yaml))
+
     else:
         for deploy in kubefile["deployments"]:
             if deploy["name"] == env["name"]:
@@ -521,15 +600,40 @@ def generate(env, kubefile):
                     if not os.path.exists(os.path.dirname(deploy["path"])):
                         os.makedirs(os.path.dirname(deploy["path"]))
                     with open(deploy["path"], "w") as TARGET:
+
                         if deploy["modifications"] is not None:
-                            TARGET.write(make_modifications( SRC.read()
-                                                           , os.path.basename(kubefile["src"])
-                                                           , deploy["modifications"]
-                                                           )
-                                        )
+                            src_content = SRC.read().split('---')
+                            parsed = []
+                            for src in src_content:
+                                parsed.append(yaml.load(src))
+                            
+                            modded = make_modifications( parsed
+                                                       , os.path.basename(kubefile["src"])
+                                                       , deploy["modifications"]
+                                                       )
+                            with_images = replace_images(modded, images)
+
+                            as_yaml = []
+                            for doc in with_images:
+                                as_yaml.append(yaml.dump(doc, default_flow_style=False, indent=4))
+
+                            TARGET.write("---\n".join(as_yaml))
                         else:
-                            TARGET.write(SRC.read())
-    
+
+                            src_content = SRC.read().split('---')
+                            parsed = []
+                            for src in src_content:
+                                parsed.append(yaml.load(src))
+                            
+                            with_images = replace_images(parsed, images)
+
+                            as_yaml = []
+                            for doc in with_images:
+                                as_yaml.append(yaml.dump(doc, default_flow_style=False, indent=4))
+
+                            TARGET.write("---\n".join(as_yaml))
+
+
 
 
 @click.command()

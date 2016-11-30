@@ -3,7 +3,6 @@ kube-env:
     kubernetes-configs: example
     deployments: deployments
   docker:
-    cmd: minikube docker-env
     images:
       - name: nginx-static-proxy
         location: app/nginx
@@ -16,10 +15,12 @@ kube-env:
         location: app/api
   deployments:
     - name: prod
+      image_versioning: semantic
       docker-repo: gcr.io/lunar-alpha-93213
       kubernetes-context: gke_lunar-alpha-93213_us-east1-c_starterkit-experiment
     - name: dev
       kubernetes-context: minikube
+      image_versioning: latest
       modifications:
         - file: base.yaml
           where: metadata.name == api
