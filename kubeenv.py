@@ -34,11 +34,18 @@ mod_schema = voluptuous.Schema({ Required('file'): str
                                , Required('diff'): [ diff_schema ]
                                })
 
-
 image_schema = voluptuous.Schema({ Required('name'):str
                                  , Required('location'):str
                                  , Optional('dockerfile', default=None):str
                                  })
+
+def UniqueImageList(images):
+    names = [img["name"] for img in images]
+    if len(names) != len(set(names)):
+        raise voluptuous.Invalid("The kube-env image list contains duplicates!")
+    for img in images:
+        image_schema(img)
+    return images
 
 directories_schema = voluptuous.Schema({ Required('kubernetes-configs'): str
                                        , Required('deployments'): str
@@ -48,7 +55,7 @@ directories_schema = voluptuous.Schema({ Required('kubernetes-configs'): str
 config_schema = voluptuous.Schema({
     Required('kube-env'): {
         Required('dirs'): directories_schema,
-        Required('docker'): { Required('images'): [ image_schema ]
+        Required('docker'): { Required('images'): UniqueImageList
                             },
         Required('deployments'): [{ Required('name'): str
                                   , Required('image_versioning'): Any('semantic', 'latest')
@@ -61,6 +68,9 @@ config_schema = voluptuous.Schema({
     }
  })
 
+
+    
+    
 
 
 
@@ -422,7 +432,6 @@ def increment_version(image_name, version_type):
     largest = None
     for vers in versions.split("\n"):
         semver = semVer(vers)
-        print(semver)
         if semver:
             if largest is None:
                 largest = semver
@@ -452,7 +461,6 @@ def get_latest_real_version(image_name):
     largest = None
     for vers in versions.split("\n"):
         semver = semVer(vers)
-        print(semver)
         if semver:
             if largest is None:
                 largest = semver
