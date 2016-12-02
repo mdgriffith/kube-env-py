@@ -3,6 +3,7 @@ from __future__ import print_function
 import os
 import os.path
 import subprocess
+import base64
 import pprint
 import jsonpath_rw as path
 import yaml
@@ -300,20 +301,44 @@ def update_json(json, path, value):
 
 cwd = os.getcwd()
 
-def replace_cwd(x):
+def replace(x, kind, parent_key=None):
     if isinstance(x, dict):
         for key in x.keys():
-            x[key] = replace_cwd(x[key])
+            x[key] = replace(x[key], kind, key)
         return x
-    elif isinstance(x, basestring) and '{cwd}' in x:
-        return x.format(cwd=cwd)
+    elif isinstance(x, basestring):
+        modified = False
+        replaced = x
+        if x == '{random_token}':
+            random_token = "".join([random.choice(string.ascii_letters + string.digits) for n in xrange(64)])
+            replaced = x.format(random_token=random_token)
+            modified = True
+        elif '{cwd}' in x:
+            replaced = x.format(cwd=cwd)
+            modified = True
+        elif x == '{password}':
+            password = getpass.getpass("{parent_key}: ".format(parent_key=parent_key))
+            replaced = x.format(password=password)
+            modified = True
+        elif x == '{input}':
+            user_input = raw_input("{parent_key}: ".format(parent_key=parent_key))
+            replaced = x.format(input=user_input)
+            modified = True
+
+        if kind == 'Secret' and modified:
+            return base64.b64encode(replaced)
+        else:
+            return replaced
+
     elif hasattr(x, '__iter__'):
         ys = []
         for y in x:
-            ys.append(replace_cwd(y))
+            ys.append(replace(y, kind))
         return ys
     else:
         return x
+
+
 
 
 def make_modifications(files, filename, modifications):
@@ -321,6 +346,7 @@ def make_modifications(files, filename, modifications):
     new_doc = []
     for base in files:
         new_base = base.copy()
+        new_base = replace(new_base, base["kind"])
         for mod in modifications:
             if mod["file"] == filename:
 
@@ -354,18 +380,19 @@ def make_modifications(files, filename, modifications):
 
                     target = path.parse(target_path)
 
+
                     for found in target.find(base):
                         if "add" in diff:
                             if isinstance(diff["add"], dict):
                                 new_value = found.value
-                                new_value.update(replace_cwd(diff["add"]))
+                                new_value.update(diff["add"])
                                 update_json(new_base, get_path(found), new_value)
                             elif isinstance(diff["add"], basestring):
                                 update_json(new_base, get_path(found), diff["add"])
                             else:
                                 # it is a list
                                 new_value = found.value
-                                new_value.extend(replace_cwd(diff["add"]))
+                                new_value.extend(diff["add"])
                                 update_json(new_base, get_path(found), new_value)
                         elif "delete" in diff:
                             new_value = found.value
@@ -706,6 +733,9 @@ def logs():
     Switch to an environment listed in kube/kube-env file.
     """
     pass
+
+
+
 
 
 
