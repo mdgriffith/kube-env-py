@@ -10,25 +10,26 @@ import yaml
 import voluptuous
 from voluptuous import Required, Optional, Extra, Any
 import click
+import random
+import string
+import getpass
+
 
 ##############
 # Schemas
 ##############
 
 diff_schema = voluptuous.Any(
-                  voluptuous.Schema({ Required('at'): str
-                                    , Required('add'): Any(str, [Extra], {Extra:Extra})
+                  voluptuous.Schema({ Required('add'): Any(str, [Extra], {Extra:Extra})
                                     , Optional('where'): str
                                     })
-                , voluptuous.Schema({ Required('at'): str
-                                    , Required('delete'): str
+                , voluptuous.Schema({ Required('delete'): str
                                     , Optional('where'): str
                                     })
                 )
 
-mod_schema = voluptuous.Schema({ Required('file'): str
-                               , Required('where'): str
-                               , Required('diff'): [ diff_schema ]
+mod_schema = voluptuous.Schema({ Required('where'): str
+                               , Required('diff'): { Extra: [ diff_schema ] }
                                })
 
 image_schema = voluptuous.Schema({ Required('name'):str
@@ -58,7 +59,7 @@ config_schema = voluptuous.Schema({
                                   , Required('image_versioning'): Any('semantic', 'latest')
                                   , Required('kubernetes-context'): str
                                   , Optional('docker-repo', default=None): str
-                                  , Optional('modifications', default=None): [ mod_schema ]
+                                  , Optional('modifications', default=None): { Extra: [ mod_schema ] }
                                   }
                                  ]
         
@@ -346,57 +347,58 @@ def make_modifications(files, filename, modifications):
     new_doc = []
     for base in files:
         new_base = base.copy()
-        new_base = replace(new_base, base["kind"])
-        for mod in modifications:
-            if mod["file"] == filename:
+        for mod_file, mod_locations in modifications.items():
 
-                if "where" in mod:
-                    where = mod["where"].split("==")
-                    desired = where[1].strip()
-                    target = where[0].strip()
+            if mod_file == filename:
+                for location in mod_locations:
 
-                    passing = False
-                    for found in path.parse(target).find(base):
-                        if found.value == desired:
-                            passing = True
-                    if not passing:
-                        continue
-
-                for diff in mod["diff"]:
-                    target_path = diff["at"]
-
-                    if "where" in diff:
-                        where = diff["where"].split("==")
+                    if "where" in location:
+                        where = location["where"].split("==")
                         desired = where[1].strip()
                         target = where[0].strip()
-                        found_index = None
-                        for i, found in enumerate(path.parse(target_path).find(base)):
-                            if target in found.value:
-                                if str(found.value[target]) == desired:
-                                    found_index = i
-                        if found_index is None:
+
+                        passing = False
+                        for found in path.parse(target).find(base):
+                            if found.value == desired:
+                                passing = True
+                        if not passing:
                             continue
-                        target_path = target_path[:-3] + "[" + str(found_index) + "]"
 
-                    target = path.parse(target_path)
+                    for target_path, diff_list in location["diff"].items():
+                        for diff in diff_list:
+                            if "where" in diff:
+                                where = diff["where"].split("==")
+                                desired = where[1].strip()
+                                target = where[0].strip()
+                                found_index = None
+                                for i, found in enumerate(path.parse(target_path).find(base)):
+                                    if target in found.value:
+                                        if str(found.value[target]) == desired:
+                                            found_index = i
+                                if found_index is None:
+                                    continue
+                                target_path = target_path[:-3] + "[" + str(found_index) + "]"
+
+                            target = path.parse(target_path)
 
 
-                    for found in target.find(base):
-                        if "add" in diff:
-                            if isinstance(diff["add"], dict):
-                                new_value = found.value
-                                new_value.update(diff["add"])
-                                update_json(new_base, get_path(found), new_value)
-                            elif isinstance(diff["add"], basestring):
-                                update_json(new_base, get_path(found), diff["add"])
-                            else:
-                                # it is a list
-                                new_value = found.value
-                                new_value.extend(diff["add"])
-                                update_json(new_base, get_path(found), new_value)
-                        elif "delete" in diff:
-                            new_value = found.value
-                            del new_value[diff["delete"]]
+                            for found in target.find(base):
+                                if "add" in diff:
+                                    if isinstance(diff["add"], dict):
+                                        new_value = found.value
+                                        new_value.update(diff["add"])
+                                        update_json(new_base, get_path(found), new_value)
+                                    elif isinstance(diff["add"], basestring):
+                                        update_json(new_base, get_path(found), diff["add"])
+                                    else:
+                                        # it is a list
+                                        new_value = found.value
+                                        new_value.extend(diff["add"])
+                                        update_json(new_base, get_path(found), new_value)
+                                elif "delete" in diff:
+                                    new_value = found.value
+                                    del new_value[diff["delete"]]
+        new_base = replace(new_base, base["kind"])
         new_doc.append(new_base)
     return new_doc
 
@@ -733,9 +735,6 @@ def logs():
     Switch to an environment listed in kube/kube-env file.
     """
     pass
-
-
-
 
 
 

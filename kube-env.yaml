@@ -22,20 +22,20 @@ kube-env:
       kubernetes-context: minikube
       image_versioning: latest
       modifications:
-        - file: base.yaml
-          where: metadata.name == api
-          diff:
-            - at: spec.template.spec.containers[*]
-              where: name == flask
-              add:
-                volumeMounts:
-                  - mountPath: /usr/src/app/
-                    name: flask-src
-            - at: spec.template.spec.volumes
-              extend:
-                - name: static-serve-dir
-                  hostPath:
-                    path: "{cwd}/app/nginx/serve/"
-                - name: flask-src
-                  hostPath:
-                    path: "{cwd}/app/api/"
+        - base.yaml:
+            where: metadata.name == api
+            diff:
+              spec.template.spec.containers[*]:
+                where: name == flask
+                add:
+                  volumeMounts:
+                    - mountPath: /usr/src/app/
+                      name: flask-src
+              spec.template.spec.volumes:
+                add:
+                  - name: static-serve-dir
+                    hostPath:
+                      path: "{cwd}/app/nginx/serve/"
+                  - name: flask-src
+                    hostPath:
+                      path: "{cwd}/app/api/"
