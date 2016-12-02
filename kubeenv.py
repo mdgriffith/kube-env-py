@@ -1,6 +1,5 @@
 from __future__ import print_function
 
-
 import os
 import os.path
 import subprocess
@@ -17,11 +16,8 @@ import click
 
 diff_schema = voluptuous.Any(
                   voluptuous.Schema({ Required('at'): str
-                                    , Required('add'): {Extra:Extra}
+                                    , Required('add'): Any(str, [Extra], {Extra:Extra})
                                     , Optional('where'): str
-                                    })
-                , voluptuous.Schema({ Required('at'): str
-                                    , Required('extend'): [Extra]
                                     })
                 , voluptuous.Schema({ Required('at'): str
                                     , Required('delete'): str
@@ -242,7 +238,6 @@ def get_images(env):
         docker_repo = None
 
         for deployment in config["kube-env"]["deployments"]:
-
             if deployment["name"] == env["name"]:
                 if "docker-repo" in deployment:
                     docker_repo = deployment["docker-repo"]
@@ -252,13 +247,15 @@ def get_images(env):
         for img in images:
             img["repo"] = docker_repo
 
+            full_name = img["name"]
+            if img["repo"] is not None:
+                full_name = img["repo"] + "/" + full_name
+            # pprint.pprint(env)
             if env["image_versioning"] == "semantic":
-                img["version"] = get_latest_real_version(img["name"])
+                img["version"] = get_latest_real_version(full_name)
             elif env["image_versioning"] == "latest":
                 img["version"] = "latest"
             expanded_images[img["name"]] = img
-            
-
         return expanded_images
        
 
@@ -283,6 +280,7 @@ start from outer most item.'''
         for path_element in get_path(match.context):
             yield path_element
         yield str(match.path)
+
 
 def update_json(json, path, value):
     '''Update JSON dictionnary PATH with VALUE. Return updated JSON'''
@@ -340,6 +338,7 @@ def make_modifications(files, filename, modifications):
 
                 for diff in mod["diff"]:
                     target_path = diff["at"]
+
                     if "where" in diff:
                         where = diff["where"].split("==")
                         desired = where[1].strip()
@@ -347,22 +346,27 @@ def make_modifications(files, filename, modifications):
                         found_index = None
                         for i, found in enumerate(path.parse(target_path).find(base)):
                             if target in found.value:
-                                if found.value[target] == desired:
+                                if str(found.value[target]) == desired:
                                     found_index = i
                         if found_index is None:
                             continue
                         target_path = target_path[:-3] + "[" + str(found_index) + "]"
 
                     target = path.parse(target_path)
+
                     for found in target.find(base):
                         if "add" in diff:
-                            new_value = found.value
-                            new_value.update(replace_cwd(diff["add"]))
-                            update_json(new_base, get_path(found), new_value)
-                        elif "extend" in diff:
-                            new_value = found.value
-                            new_value.extend(replace_cwd(diff["extend"]))
-                            update_json(new_base, get_path(found), new_value)
+                            if isinstance(diff["add"], dict):
+                                new_value = found.value
+                                new_value.update(replace_cwd(diff["add"]))
+                                update_json(new_base, get_path(found), new_value)
+                            elif isinstance(diff["add"], basestring):
+                                update_json(new_base, get_path(found), diff["add"])
+                            else:
+                                # it is a list
+                                new_value = found.value
+                                new_value.extend(replace_cwd(diff["add"]))
+                                update_json(new_base, get_path(found), new_value)
                         elif "delete" in diff:
                             new_value = found.value
                             del new_value[diff["delete"]]
@@ -381,6 +385,8 @@ def replace_images(x, images, parent_key=None):
             new_name = ""
             if "repo" in images[x] and images[x]["repo"] is not None:
                 new_name = images[x]["repo"] + "/"
+            else:
+                new_name =  "library/"
 
             new_name = new_name + images[x]["name"] + ":" + images[x]["version"]
 
@@ -468,7 +474,9 @@ def get_latest_real_version(image_name):
                 largest = semver
             elif isLarger(semver, largest):
                 largest = semver
-    return largest
+    if largest is None:
+        return "1.0.0"
+    return str(largest[0]) + "." + str(largest[1]) + "." + str(largest[2])
 
 
 @click.command()
@@ -480,20 +488,22 @@ def build(image):
     """
     if "all" in image:
         for img in image["all"]:
-            full_image_name = img["name"] + ":latest"
+            full_image_name = "library/" + img["name"] + ":latest"
             dockerfile = "Dockerfile"
-            if "dockerfile" in image:
+            if "dockerfile" in img:
                 dockerfile = img["dockerfile"]
             location = img["location"]
+            full_dockerfile = os.path.join(location, dockerfile)
             subprocess.call("docker build -t {full_image_name} -f {dockerfile} {location}".format(
                 full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
 
     else:
-        full_image_name = image["name"] + ":latest"
+        full_image_name = "library/" + image["name"] + ":latest"
         dockerfile = "Dockerfile"
         if "dockerfile" in image:
             dockerfile = image["dockerfile"]
         location = image["location"]
+        full_dockerfile = os.path.join(location, dockerfile)
         subprocess.call("docker build -t {full_image_name} -f {dockerfile} {location}".format(
             full_image_name=full_image_name, location=location, dockerfile=full_dockerfile), shell=True)
 
@@ -512,15 +522,17 @@ def push(image, env, version_type):
 
     if "all" in image:
         for im in image["all"]:
-            tag = get_latest_real_version(im["name"])
+            full_name = env["docker-repo"] + "/" + im["name"]
+            tag = get_latest_real_version(full_name)
             local = im["name"] + ":" + tag
-            tagged = env["docker-repo"] + "/" + im["name"] + ":" + tag
+            tagged = full_name + ":" + tag
 
             subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
             subprocess.call("gcloud docker -- push {tagged}".format(image=full_name), shell=True)
 
     else:
-        tag = get_latest_real_version(im["name"])
+        full_name = env["docker-repo"] + "/" + im["name"]
+        tag = get_latest_real_version(full_name)
         local = im["name"] + ":" + tag
         tagged = env["docker-repo"] + "/" + im["name"] + ":" + tag
 
@@ -537,13 +549,13 @@ def tag(image, version_type):
     if "all" in image:
         for im in image["all"]:
             tag = increment_version(im["name"], version_type)
-            local = image["name"]
-            tagged = image["name"] + ":" + tag
+            local = "library/" + image["name"]
+            tagged = "library/" + image["name"] + ":" + tag
             subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
     else:
         tag = increment_version(image["name"], version_type)
-        local = image["name"]
-        tagged = image["name"] + ":" + tag
+        local = "library/" + image["name"]
+        tagged = "library/" + image["name"] + ":" + tag
         subprocess.call("docker tag {local} {tagged}".format(local=local, tagged=tagged))
 
 
@@ -564,8 +576,6 @@ def generate(env, kubefile):
         for kubeconfig in kubefile["all"]:
             for deploy in kubeconfig["deployments"]:
                 if deploy["name"] == env["name"]:
-                    print("kubeconfig file")
-                    print(kubeconfig["src"])
                     with open(kubeconfig["src"]) as SRC:
                         if not os.path.exists(os.path.dirname(deploy["path"])):
                             os.makedirs(os.path.dirname(deploy["path"]))
@@ -671,8 +681,7 @@ def apply(env, kubefile):
         for file in kubefile["all"]:
             for deploy in file["deployments"]:
                 if deploy["name"] == env["name"]:
-                    if not os.path.exists(deploy["path"]):
-                        subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
+                    subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
 
     else:
 
@@ -688,8 +697,7 @@ def apply(env, kubefile):
 
         for deploy in kubefile["deployments"]:
             if deploy["name"] == env["name"]:
-                if not os.path.exists(deploy["path"]):
-                    subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
+                subprocess.call("kubectl apply -f {path};".format(path=deploy["path"]), shell=True)
 
 
 @click.command()
@@ -698,8 +706,6 @@ def logs():
     Switch to an environment listed in kube/kube-env file.
     """
     pass
-
-
 
 
 
